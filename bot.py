@@ -186,7 +186,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ---------- КАЛЬКУЛЯТОР ----------
     if data == "calculator":
         await query.edit_message_text(
-            "🧮 **Рассчитаем примерную стоимость**\n\n"
+            "🧮 Рассчитаем примерную стоимость\n\n"
             "Выберите вид работ, который вас интересует:",
             reply_markup=get_calc_service_keyboard()
         )
@@ -199,7 +199,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             f"Вы выбрали: {services[index]['name']}\n"
             f"Стоимость: {services[index]['price_text']}\n\n"
-            "Теперь напишите примерную **площадь в м²** (цифрой).",
+            "Теперь напишите примерную площадь в м² (цифрой).",
             reply_markup=get_cancel_keyboard()
         )
         return
@@ -389,12 +389,17 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             service = services[service_index]
             total = service["price"] * area
             await update.message.reply_text(
-                f"🧮 **Расчёт стоимости:**\n\n"
+                f"🧮 Расчёт стоимости:\n\n"
                 f"Услуга: {service['name']}\n"
                 f"Площадь: {area} м²\n"
                 f"Цена за м²: {service['price_text']}\n\n"
-                f"💎 **Примерная стоимость: {total:,.0f} ₽**\n\n"
-                "Точную стоимость рассчитаем после выезда на замер.",
+                f"💸 Примерная стоимость: {total:,.0f} ₽\n\n"
+                "Точная стоимость рассчитывается после выезда на замер и зависит от:\n"
+                "• состояния стен (кривизна, трещины, влажность)\n"
+                "• сложности работ (запилы плитки под 45°, отверстия под розетки, трубы)\n"
+                "• необходимости дополнительных услуг (грунтовка, армирование, выравнивание)\n\n"
+                "✅ После замеров мы вышлем вам прозрачную смету\n"
+                "со всеми расценками и необходимыми работами — честно и без скрытых платежей.",
                 reply_markup=get_main_menu()
             )
             user_data.pop("calc_step", None)
