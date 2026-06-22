@@ -1,10 +1,24 @@
 import asyncio
+from http.server import HTTPServer, BaseHTTPRequestHandler
+import threading
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 
+# --- ВАШИ ДАННЫЕ ---
 BOT_TOKEN = "8885379423:AAGbn9nfZj-I4_nzC0mU9Aec0y23GGbzaLY"
 ADMIN_ID = 5206473963
 CHAT_ID = -1003978554378
+# -------------------
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+def run_health_server():
+    server = HTTPServer(('0.0.0.0', 10000), HealthHandler)
+    server.serve_forever()
 
 async def forward_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     print(f"Получено сообщение из чата с ID: {update.effective_chat.id}")
@@ -23,7 +37,10 @@ async def forward_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(f"ID чата не совпадает: {update.effective_chat.id} != {CHAT_ID}")
 
 def main():
-    # Увеличиваем таймауты до 120 секунд
+    # Health-сервер для Render
+    thread = threading.Thread(target=run_health_server, daemon=True)
+    thread.start()
+
     app = Application.builder() \
         .token(BOT_TOKEN) \
         .connect_timeout(120) \
