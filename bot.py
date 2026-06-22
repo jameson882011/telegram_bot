@@ -11,7 +11,6 @@ from telegram.ext import (
     filters,
     ContextTypes,
     CommandHandler,
-    ConversationHandler,
     CallbackQueryHandler,
 )
 
@@ -21,10 +20,9 @@ ADMIN_ID = 5206473963
 CHAT_ID = -1003978554378
 # ---------------------------------
 
-# Состояния для диалога заявки (5 шагов)
+# Состояния для диалога заявки
 NAME, PHONE, ADDRESS, WORK_TYPE, AREA = range(5)
 
-# Файлы для хранения данных
 STATS_FILE = "stats.json"
 
 # ---------- СТАТИСТИКА ----------
@@ -106,6 +104,31 @@ def get_service_keyboard(index):
     buttons.append(InlineKeyboardButton("📋 В меню", callback_data="back"))
     return InlineKeyboardMarkup([buttons])
 
+# ---------- КЛАВИАТУРЫ ДЛЯ ДИАЛОГА ----------
+def get_work_type_keyboard():
+    buttons = [
+        [InlineKeyboardButton("🖌️ Малярные работы", callback_data="work_малярка")],
+        [InlineKeyboardButton("🧱 Штукатурка", callback_data="work_штукатурка")],
+        [InlineKeyboardButton("🛁 Укладка плитки", callback_data="work_плитка")],
+        [InlineKeyboardButton("🌟 Натяжные потолки", callback_data="work_потолки")],
+        [InlineKeyboardButton("🏠 Отделка под ключ", callback_data="work_под_ключ")],
+        [InlineKeyboardButton("✏️ Свой вариант", callback_data="work_other")],
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+def get_area_keyboard():
+    buttons = [
+        [InlineKeyboardButton("📏 до 20 м²", callback_data="area_до20")],
+        [InlineKeyboardButton("📏 20–50 м²", callback_data="area_20-50")],
+        [InlineKeyboardButton("📏 50–100 м²", callback_data="area_50-100")],
+        [InlineKeyboardButton("📏 более 100 м²", callback_data="area_более100")],
+        [InlineKeyboardButton("✏️ Свой вариант", callback_data="area_other")],
+    ]
+    return InlineKeyboardMarkup(buttons)
+
+def get_cancel_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить заявку", callback_data="cancel_order")]])
+
 # ---------- HEALTH-СЕРВЕР ----------
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -138,6 +161,47 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_data = context.user_data
 
+    # Обработка кнопок в диалоге
+    if data.startswith("work_"):
+        work_type = data.split("_")[1]
+        if work_type == "other":
+            await query.edit_message_text(
+                "Напишите свой вариант вида работ (например, 'декор стен').",
+                reply_markup=get_cancel_keyboard()
+            )
+            user_data["order_step"] = "work_type_custom"
+        else:
+            user_data["order_work_type"] = work_type
+            user_data["order_step"] = "area"
+            await query.edit_message_text(
+                "Отлично! Теперь укажите примерный объём работ:",
+                reply_markup=get_area_keyboard()
+            )
+        return
+
+    elif data.startswith("area_"):
+        area = data.split("_")[1]
+        if area == "other":
+            await query.edit_message_text(
+                "Напишите объём в м² (например, 45).",
+                reply_markup=get_cancel_keyboard()
+            )
+            user_data["order_step"] = "area_custom"
+        else:
+            user_data["order_area"] = area
+            # Завершаем заявку
+            await finish_order(update, context, query)
+        return
+
+    elif data == "cancel_order":
+        user_data.clear()
+        await query.edit_message_text(
+            "Заявка отменена.",
+            reply_markup=get_main_menu()
+        )
+        return
+
+    # Остальные кнопки меню
     if data == "prices":
         index = 0
         user_data["service_index"] = index
@@ -186,7 +250,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "order":
         user_data["order_step"] = "name"
         await query.edit_message_text(
-            "📝 Для записи на замер напишите ваше **имя** (или отправьте /cancel для отмены)."
+            "📝 Для записи на замер напишите ваше **имя** (или нажмите кнопку отмены).",
+            reply_markup=get_cancel_keyboard()
         )
         return
 
@@ -222,75 +287,107 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.delete_message()
 
-# ---------- ОБРАБОТЧИК ЗАЯВКИ (пошаговый, 5 шагов) ----------
-async def handle_order_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def finish_order(update, context, query=None):
+    """Завершает сбор заявки и отправляет админу"""
     user_data = context.user_data
-    step = user_data.get("order_step")
-    if not step:
-        return
+    name = user_data.get("order_name", "не указано")
+    phone = user_data.get("order_phone", "не указано")
+    address = user_data.get("order_address", "не указано")
+    work_type = user_data.get("order_work_type", "не указано")
+    area = user_data.get("order_area", "не указано")
 
-    text = update.message.text
-    if text.startswith('/'):
-        return
-
-    if step == "name":
-        user_data["order_name"] = text
-        user_data["order_step"] = "phone"
-        await update.message.reply_text("Отлично! Теперь напишите ваш **телефон**.")
-    elif step == "phone":
-        user_data["order_phone"] = text
-        user_data["order_step"] = "address"
-        await update.message.reply_text("Теперь напишите **адрес** (город, улица, дом).")
-    elif step == "address":
-        user_data["order_address"] = text
-        user_data["order_step"] = "work_type"
-        await update.message.reply_text(
-            "Теперь уточните, что именно нужно сделать:\n"
-            "Например: малярные работы, черновые работы, отделка под ключ, укладка плитки, натяжные потолки и т.д."
+    msg = (
+        f"🔔 **НОВАЯ ЗАЯВКА НА ЗАМЕР**\n"
+        f"Имя: {name}\n"
+        f"Телефон: {phone}\n"
+        f"Адрес: {address}\n"
+        f"Вид работ: {work_type}\n"
+        f"Объём: {area} м²"
+    )
+    await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+    if query:
+        await query.edit_message_text(
+            "✅ Заявка принята! Мы свяжемся с вами в ближайшее время.",
+            reply_markup=get_main_menu()
         )
-    elif step == "work_type":
-        user_data["order_work_type"] = text
-        user_data["order_step"] = "area"
-        await update.message.reply_text(
-            "Теперь укажите примерный **объём работ в м²** (например, 45).\n"
-            "Если не знаете точно, напишите приблизительно."
-        )
-    elif step == "area":
-        area = text
-        name = user_data.get("order_name", "не указано")
-        phone = user_data.get("order_phone", "не указано")
-        address = user_data.get("order_address", "не указано")
-        work_type = user_data.get("order_work_type", "не указано")
-        # Отправляем заявку админу
-        msg = (
-            f"🔔 **НОВАЯ ЗАЯВКА НА ЗАМЕР**\n"
-            f"Имя: {name}\n"
-            f"Телефон: {phone}\n"
-            f"Адрес: {address}\n"
-            f"Вид работ: {work_type}\n"
-            f"Объём: {area} м²"
-        )
-        await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+    else:
         await update.message.reply_text(
             "✅ Заявка принята! Мы свяжемся с вами в ближайшее время.",
             reply_markup=get_main_menu()
         )
-        stats["orders"] += 1
-        save_stats(stats)
-        # Очищаем состояние
-        user_data.pop("order_step", None)
-        user_data.pop("order_name", None)
-        user_data.pop("order_phone", None)
-        user_data.pop("order_address", None)
-        user_data.pop("order_work_type", None)
 
-async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    stats["orders"] += 1
+    save_stats(stats)
+    user_data.clear()
+
+# ---------- ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ (для заявки и FAQ) ----------
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
-    if "order_step" in user_data:
-        user_data.clear()
-        await update.message.reply_text("Заявка отменена.", reply_markup=get_main_menu())
-    else:
-        await update.message.reply_text("У вас нет активной заявки.", reply_markup=get_main_menu())
+    step = user_data.get("order_step")
+    text = update.message.text
+
+    # Если диалог заявки активен
+    if step:
+        if text.startswith('/'):
+            return
+
+        if step == "name":
+            user_data["order_name"] = text
+            user_data["order_step"] = "phone"
+            await update.message.reply_text(
+                "Отлично! Теперь напишите ваш **телефон** (или нажмите кнопку отмены).",
+                reply_markup=get_cancel_keyboard()
+            )
+        elif step == "phone":
+            user_data["order_phone"] = text
+            user_data["order_step"] = "address"
+            await update.message.reply_text(
+                "Теперь напишите **адрес** (город, улица, дом).",
+                reply_markup=get_cancel_keyboard()
+            )
+        elif step == "address":
+            user_data["order_address"] = text
+            user_data["order_step"] = "work_type"
+            await update.message.reply_text(
+                "Теперь выберите вид работ:",
+                reply_markup=get_work_type_keyboard()
+            )
+        elif step == "work_type_custom":
+            user_data["order_work_type"] = text
+            user_data["order_step"] = "area"
+            await update.message.reply_text(
+                "Теперь укажите объём работ:",
+                reply_markup=get_area_keyboard()
+            )
+        elif step == "area_custom":
+            user_data["order_area"] = text
+            await finish_order(update, context)
+        return
+
+    # Если не в диалоге, проверяем FAQ и автоответы
+    if update.effective_chat.type == "private":
+        if text:
+            text_lower = text.lower()
+            for keyword, answer in faq.items():
+                if keyword in text_lower:
+                    await update.message.reply_text(answer)
+                    stats["messages"] += 1
+                    save_stats(stats)
+                    return
+
+    # Если сообщение из группы – пересылаем админу
+    if update.effective_chat.id == CHAT_ID:
+        if text and text.startswith('/'):
+            return
+        try:
+            await context.bot.forward_message(
+                chat_id=ADMIN_ID,
+                from_chat_id=update.effective_chat.id,
+                message_id=update.effective_message.message_id
+            )
+            print("Сообщение переслано")
+        except Exception as e:
+            print(f"Ошибка пересылки: {e}")
 
 # ---------- ОБРАБОТКА ФОТО/ВИДЕО ----------
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -327,35 +424,6 @@ async def handle_report_description(update: Update, context: ContextTypes.DEFAUL
             await update.message.reply_text("Ошибка. Попробуйте заново.")
             context.user_data.clear()
 
-# ---------- ПЕРЕСЫЛКА ИЗ ГРУППЫ ----------
-async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.id == CHAT_ID:
-        if update.message and update.message.text and update.message.text.startswith('/'):
-            return
-        try:
-            await context.bot.forward_message(
-                chat_id=ADMIN_ID,
-                from_chat_id=update.effective_chat.id,
-                message_id=update.effective_message.message_id
-            )
-            print("Сообщение переслано")
-        except Exception as e:
-            print(f"Ошибка пересылки: {e}")
-
-async def auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat.type == "private":
-        text = update.message.text
-        if text:
-            text_lower = text.lower()
-            for keyword, answer in faq.items():
-                if keyword in text_lower:
-                    await update.message.reply_text(answer)
-                    stats["messages"] += 1
-                    save_stats(stats)
-                    return
-    if update.effective_chat.id == CHAT_ID:
-        await forward_to_admin(update, context)
-
 # ---------- ГЛАВНАЯ ФУНКЦИЯ ----------
 def main():
     thread = threading.Thread(target=run_health_server, daemon=True)
@@ -366,15 +434,26 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CommandHandler("cancel", cancel_order))
+
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_reply))
-    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, forward_to_admin))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_order_text))
+    # Основной обработчик текста (заявка + FAQ + пересылка)
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+    # Обработчики медиа
+    app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_report_description))
 
     print("Бот запущен и слушает сообщения...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_data = context.user_data
+    if "order_step" in user_data:
+        user_data.clear()
+        await update.message.reply_text("Заявка отменена.", reply_markup=get_main_menu())
+    else:
+        await update.message.reply_text("У вас нет активной заявки.", reply_markup=get_main_menu())
 
 if __name__ == "__main__":
     main()
