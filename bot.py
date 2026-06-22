@@ -2,7 +2,7 @@ import asyncio
 import time
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
 from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler, CallbackQueryHandler
 
 # ---------- КОНФИГУРАЦИЯ ----------
@@ -11,8 +11,7 @@ ADMIN_ID = 5206473963
 CHAT_ID = -1003978554378
 # ---------------------------------
 
-# ---------- ДАННЫЕ УСЛУГ (карусель) ----------
-# Замените ссылки на фото на свои!
+# ---------- ДАННЫЕ УСЛУГ ----------
 services = [
     {
         "name": "Покраска стен",
@@ -46,7 +45,6 @@ services = [
     },
 ]
 
-# ---------- FAQ ----------
 faq = {
     "светотень": "Светотени на стенах возникают из-за неравномерного нанесения краски или плохой подготовки. Обычно помогает перекраска с валиком с длинным ворсом.",
     "штукатурка": "Штукатурка должна сохнуть минимум 7 дней перед покраской.",
@@ -107,16 +105,52 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    user_data = context.user_data
 
     if data == "prices":
-        # Показываем первую услугу
-        context.user_data["service_index"] = 0
-        await show_service(update, context)
+        index = 0
+        user_data["service_index"] = index
+        service = services[index]
+        caption = f"💰 **{service['name']}**\nЦена: {service['price']}\n\n{service['desc']}"
+        keyboard = get_service_keyboard(index)
+        msg = await context.bot.send_photo(
+            chat_id=update.effective_chat.id,
+            photo=service['photo'],
+            caption=caption,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+        user_data["service_message_id"] = msg.message_id
+        user_data["service_chat_id"] = update.effective_chat.id
+        await query.delete_message()
+        return
 
     elif data.startswith("svc_"):
         index = int(data.split("_")[1])
-        context.user_data["service_index"] = index
-        await show_service(update, context)
+        user_data["service_index"] = index
+        service = services[index]
+        caption = f"💰 **{service['name']}**\nЦена: {service['price']}\n\n{service['desc']}"
+        keyboard = get_service_keyboard(index)
+        msg_id = user_data.get("service_message_id")
+        chat_id = user_data.get("service_chat_id")
+        if msg_id and chat_id:
+            await context.bot.edit_message_media(
+                chat_id=chat_id,
+                message_id=msg_id,
+                media=InputMediaPhoto(media=service['photo'], caption=caption, parse_mode="Markdown"),
+                reply_markup=keyboard
+            )
+        else:
+            msg = await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=service['photo'],
+                caption=caption,
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
+            user_data["service_message_id"] = msg.message_id
+            user_data["service_chat_id"] = update.effective_chat.id
+        return
 
     elif data == "order":
         await query.edit_message_text(
@@ -139,25 +173,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "back":
         await query.edit_message_text("Главное меню:", reply_markup=get_main_menu())
-
-async def show_service(update, context):
-    """Отображает текущую услугу с фото"""
-    query = update.callback_query
-    index = context.user_data.get("service_index", 0)
-    service = services[index]
-    caption = f"💰 **{service['name']}**\nЦена: {service['price']}\n\n{service['desc']}"
-    keyboard = get_service_keyboard(index)
-    await query.edit_message_caption(
-        caption=caption,
-        parse_mode="Markdown",
-        reply_markup=keyboard
-    )
-    # Если это первое открытие, редактируем текст на фото
-    # Используем edit_message_media для замены текста на фото
-    await query.edit_message_media(
-        media=InputMediaPhoto(media=service['photo'], caption=caption, parse_mode="Markdown"),
-        reply_markup=keyboard
-    )
+        user_data.pop("service_message_id", None)
+        user_data.pop("service_chat_id", None)
 
 # ---------- ПЕРЕСЫЛКА ИЗ ГРУППЫ ----------
 async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
