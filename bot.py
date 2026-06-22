@@ -1,15 +1,44 @@
 import asyncio
 import time
 import threading
+import json
+import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
-from telegram.ext import Application, MessageHandler, filters, ContextTypes, CommandHandler, CallbackQueryHandler
+from telegram.ext import (
+    Application,
+    MessageHandler,
+    filters,
+    ContextTypes,
+    CommandHandler,
+    ConversationHandler,
+    CallbackQueryHandler,
+)
 
 # ---------- КОНФИГУРАЦИЯ ----------
 BOT_TOKEN = "8885379423:AAGbn9nfZj-I4_nzC0mU9Aec0y23GGbzaLY"
 ADMIN_ID = 5206473963
 CHAT_ID = -1003978554378
 # ---------------------------------
+
+# Состояния для диалога заявки (5 шагов)
+NAME, PHONE, ADDRESS, WORK_TYPE, AREA = range(5)
+
+# Файлы для хранения данных
+STATS_FILE = "stats.json"
+
+# ---------- СТАТИСТИКА ----------
+def load_stats():
+    if os.path.exists(STATS_FILE):
+        with open(STATS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return {"orders": 0, "messages": 0}
+
+def save_stats(stats):
+    with open(STATS_FILE, "w", encoding="utf-8") as f:
+        json.dump(stats, f, ensure_ascii=False, indent=2)
+
+stats = load_stats()
 
 # ---------- ДАННЫЕ УСЛУГ ----------
 services = [
@@ -97,6 +126,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Выберите, что вам нужно:",
         reply_markup=get_main_menu()
     )
+    stats["messages"] += 1
+    save_stats(stats)
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📋 Главное меню:", reply_markup=get_main_menu())
@@ -153,10 +184,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif data == "order":
+        user_data["order_step"] = "name"
         await query.edit_message_text(
-            "📝 Скоро здесь появится форма для записи на замер. А пока напишите мне в личные сообщения.",
-            reply_markup=get_back_menu()
+            "📝 Для записи на замер напишите ваше **имя** (или отправьте /cancel для отмены)."
         )
+        return
 
     elif data == "faq":
         text = "❓ **Готовые ответы:**\n\n"
@@ -167,12 +199,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "report":
         await query.edit_message_text(
-            "📸 Скоро здесь появится возможность отправить фото проблемы. А пока напишите мне в личные сообщения.",
+            "📸 Отправьте **фото или видео** проблемы, затем напишите текстовое описание.\n"
+            "Я перешлю всё мастеру.",
             reply_markup=get_back_menu()
         )
+        context.user_data["report_step"] = "waiting_media"
 
     elif data == "back":
-        # Удаляем сообщение с услугой
         msg_id = user_data.get("service_message_id")
         chat_id = user_data.get("service_chat_id")
         if msg_id and chat_id:
@@ -182,13 +215,117 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 print(f"Не удалось удалить сообщение: {e}")
             user_data.pop("service_message_id", None)
             user_data.pop("service_chat_id", None)
-        # Отправляем новое сообщение с главным меню
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="Главное меню:",
             reply_markup=get_main_menu()
         )
-        await query.delete_message()  # удаляем сообщение с кнопкой «В меню»
+        await query.delete_message()
+
+# ---------- ОБРАБОТЧИК ЗАЯВКИ (пошаговый, 5 шагов) ----------
+async def handle_order_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_data = context.user_data
+    step = user_data.get("order_step")
+    if not step:
+        return
+
+    text = update.message.text
+    if text.startswith('/'):
+        return
+
+    if step == "name":
+        user_data["order_name"] = text
+        user_data["order_step"] = "phone"
+        await update.message.reply_text("Отлично! Теперь напишите ваш **телефон**.")
+    elif step == "phone":
+        user_data["order_phone"] = text
+        user_data["order_step"] = "address"
+        await update.message.reply_text("Теперь напишите **адрес** (город, улица, дом).")
+    elif step == "address":
+        user_data["order_address"] = text
+        user_data["order_step"] = "work_type"
+        await update.message.reply_text(
+            "Теперь уточните, что именно нужно сделать:\n"
+            "Например: малярные работы, черновые работы, отделка под ключ, укладка плитки, натяжные потолки и т.д."
+        )
+    elif step == "work_type":
+        user_data["order_work_type"] = text
+        user_data["order_step"] = "area"
+        await update.message.reply_text(
+            "Теперь укажите примерный **объём работ в м²** (например, 45).\n"
+            "Если не знаете точно, напишите приблизительно."
+        )
+    elif step == "area":
+        area = text
+        name = user_data.get("order_name", "не указано")
+        phone = user_data.get("order_phone", "не указано")
+        address = user_data.get("order_address", "не указано")
+        work_type = user_data.get("order_work_type", "не указано")
+        # Отправляем заявку админу
+        msg = (
+            f"🔔 **НОВАЯ ЗАЯВКА НА ЗАМЕР**\n"
+            f"Имя: {name}\n"
+            f"Телефон: {phone}\n"
+            f"Адрес: {address}\n"
+            f"Вид работ: {work_type}\n"
+            f"Объём: {area} м²"
+        )
+        await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+        await update.message.reply_text(
+            "✅ Заявка принята! Мы свяжемся с вами в ближайшее время.",
+            reply_markup=get_main_menu()
+        )
+        stats["orders"] += 1
+        save_stats(stats)
+        # Очищаем состояние
+        user_data.pop("order_step", None)
+        user_data.pop("order_name", None)
+        user_data.pop("order_phone", None)
+        user_data.pop("order_address", None)
+        user_data.pop("order_work_type", None)
+
+async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_data = context.user_data
+    if "order_step" in user_data:
+        user_data.clear()
+        await update.message.reply_text("Заявка отменена.", reply_markup=get_main_menu())
+    else:
+        await update.message.reply_text("У вас нет активной заявки.", reply_markup=get_main_menu())
+
+# ---------- ОБРАБОТКА ФОТО/ВИДЕО ----------
+async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat.type == "private":
+        if context.user_data.get("report_step") == "waiting_media":
+            if update.message.photo:
+                file_id = update.message.photo[-1].file_id
+            elif update.message.video:
+                file_id = update.message.video.file_id
+            else:
+                await update.message.reply_text("Пожалуйста, отправьте фото или видео.")
+                return
+            context.user_data["media_file_id"] = file_id
+            context.user_data["report_step"] = "waiting_description"
+            await update.message.reply_text("📝 Теперь напишите текстовое описание проблемы.")
+        else:
+            await update.message.reply_text(
+                "Чтобы сообщить о проблеме, нажмите кнопку «Показать проблему на фото» в меню.",
+                reply_markup=get_main_menu()
+            )
+
+async def handle_report_description(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("report_step") == "waiting_description":
+        description = update.message.text
+        file_id = context.user_data.get("media_file_id")
+        if file_id:
+            caption = f"📸 **Проблема от пользователя**\nОписание: {description}"
+            await context.bot.send_photo(chat_id=ADMIN_ID, photo=file_id, caption=caption, parse_mode="Markdown")
+            await update.message.reply_text("✅ Отчёт отправлен мастеру! Он свяжется с вами.", reply_markup=get_main_menu())
+            stats["messages"] += 1
+            save_stats(stats)
+            context.user_data.clear()
+        else:
+            await update.message.reply_text("Ошибка. Попробуйте заново.")
+            context.user_data.clear()
 
 # ---------- ПЕРЕСЫЛКА ИЗ ГРУППЫ ----------
 async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -213,6 +350,8 @@ async def auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for keyword, answer in faq.items():
                 if keyword in text_lower:
                     await update.message.reply_text(answer)
+                    stats["messages"] += 1
+                    save_stats(stats)
                     return
     if update.effective_chat.id == CHAT_ID:
         await forward_to_admin(update, context)
@@ -226,10 +365,13 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu))
+    app.add_handler(CommandHandler("cancel", cancel_order))
     app.add_handler(CallbackQueryHandler(button_callback))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_reply))
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, forward_to_admin))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_order_text))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_report_description))
 
     print("Бот запущен и слушает сообщения...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
