@@ -3,7 +3,6 @@ import time
 import threading
 import json
 import os
-from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -15,24 +14,19 @@ from telegram.ext import (
     ConversationHandler,
     CallbackQueryHandler,
 )
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.date import DateTrigger
 
 # ---------- КОНФИГУРАЦИЯ ----------
 BOT_TOKEN = "8885379423:AAGbn9nfZj-I4_nzC0mU9Aec0y23GGbzaLY"
 ADMIN_ID = 5206473963
-CHAT_ID = -1003978554378   # ID группы, откуда пересылать
+CHAT_ID = -1003978554378
 # ---------------------------------
 
-# Состояния для диалога заявки
 NAME, PHONE, ADDRESS = range(3)
 
-# Файлы для хранения данных
 SERVICES_FILE = "services.json"
 FAQ_FILE = "faq.json"
 STATS_FILE = "stats.json"
 
-# ---------- РАБОТА С ДАННЫМИ ----------
 def load_json(filename, default):
     if os.path.exists(filename):
         with open(filename, "r", encoding="utf-8") as f:
@@ -43,12 +37,10 @@ def save_json(filename, data):
     with open(filename, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# Загружаем данные
 services = load_json(SERVICES_FILE, [])
 faq = load_json(FAQ_FILE, {})
 stats = load_json(STATS_FILE, {"orders": 0, "messages": 0})
 
-# ---------- ВИТРИНА (карусель) ----------
 if not services:
     services = [
         {"name": "Покраска стен", "price": "от 500 ₽/м²", "photo": "https://i.imgur.com/your_painting.jpg", "desc": "Качественные краски, гарантия 5 лет."},
@@ -70,7 +62,6 @@ if not faq:
     }
     save_json(FAQ_FILE, faq)
 
-# ---------- МЕНЮ ----------
 def get_main_menu():
     keyboard = [
         [InlineKeyboardButton("💰 Стоимость и услуги", callback_data="prices")],
@@ -83,7 +74,6 @@ def get_main_menu():
 def get_back_menu():
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Вернуться в меню", callback_data="back")]])
 
-# ---------- КАРУСЕЛЬ УСЛУГ ----------
 def get_service_keyboard(index, total):
     buttons = []
     if index > 0:
@@ -93,7 +83,6 @@ def get_service_keyboard(index, total):
     buttons.append(InlineKeyboardButton("📋 В меню", callback_data="back"))
     return InlineKeyboardMarkup([buttons]) if buttons else get_back_menu()
 
-# ---------- HEALTH-СЕРВЕР ----------
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -106,7 +95,6 @@ def run_health_server():
     server = HTTPServer(('0.0.0.0', 10000), HealthHandler)
     server.serve_forever()
 
-# ---------- ОСНОВНЫЕ ОБРАБОТЧИКИ ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Привет! Я бот-помощник по отделке.\n"
@@ -119,16 +107,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("📋 Главное меню:", reply_markup=get_main_menu())
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Я могу:\n"
-        "• Показать стоимость услуг с фото\n"
-        "• Принять заявку на замер\n"
-        "• Ответить на частые вопросы\n"
-        "• Принять фото проблемы и передать мастеру\n\n"
-        "Нажмите кнопку в меню или напишите вопрос."
-    )
-
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -137,25 +115,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "prices":
         context.user_data["service_index"] = 0
         await show_service(update, context, 0)
-
     elif data.startswith("svc_"):
         index = int(data.split("_")[1])
         await show_service(update, context, index)
-
     elif data == "order":
         context.user_data["order_step"] = "name"
         await query.edit_message_text(
             "📝 Для записи на замер напишите ваше **имя** (или /cancel для отмены)."
         )
         return
-
     elif data == "faq":
         text = "❓ **Готовые ответы:**\n\n"
         for keyword, answer in faq.items():
             text += f"• *{keyword.capitalize()}* — {answer}\n\n"
         text += "Если не нашли ответ, просто напишите свой вопрос."
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
-
     elif data == "report":
         await query.edit_message_text(
             "📸 Отправьте **фото или видео** проблемы, затем напишите текстовое описание.\n"
@@ -163,7 +137,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_back_menu()
         )
         context.user_data["report_step"] = "waiting_media"
-
     elif data == "back":
         await query.edit_message_text("Главное меню:", reply_markup=get_main_menu())
 
@@ -174,7 +147,6 @@ async def show_service(update, context, index):
     keyboard = get_service_keyboard(index, len(services))
     await query.edit_message_caption(caption=caption, parse_mode="Markdown", reply_markup=keyboard)
 
-# ---------- ПЕРЕСЫЛКА ИЗ ГРУППЫ ----------
 async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id == CHAT_ID:
         if update.message and update.message.text and update.message.text.startswith('/'):
@@ -188,7 +160,6 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Ошибка пересылки: {e}")
 
-# ---------- ДИАЛОГ ЗАЯВКИ ----------
 async def order_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     if text and not text.startswith('/'):
@@ -229,7 +200,6 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("У вас нет активной заявки.")
 
-# ---------- ФОТО С ОПИСАНИЕМ ----------
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
         if context.user_data.get("report_step") == "waiting_media":
@@ -264,7 +234,6 @@ async def handle_report_description(update: Update, context: ContextTypes.DEFAUL
             await update.message.reply_text("Ошибка. Попробуйте заново.")
             context.user_data.clear()
 
-# ---------- АВТООТВЕТЫ ПО FAQ ----------
 async def auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
         text = update.message.text
@@ -279,7 +248,6 @@ async def auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.id == CHAT_ID:
         await forward_to_admin(update, context)
 
-# ---------- АДМИН-КОМАНДЫ ----------
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("У вас нет прав на эту команду.")
@@ -327,42 +295,7 @@ async def admin_add_faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     save_json(FAQ_FILE, faq)
     await update.message.reply_text("✅ FAQ добавлен!")
 
-# ---------- НАПОМИНАНИЯ ----------
-scheduler = AsyncIOScheduler()
-
-async def send_reminder(chat_id, text):
-    try:
-        # Используем глобальный объект app, который будет инициализирован в main
-        await app.bot.send_message(chat_id=chat_id, text=f"⏰ Напоминание: {text}")
-    except Exception as e:
-        print(f"Ошибка отправки напоминания: {e}")
-
-async def set_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("Нет прав.")
-        return
-    args = update.message.text.split(maxsplit=3)
-    if len(args) < 4:
-        await update.message.reply_text("Формат: /remind YYYY-MM-DD HH:MM Текст")
-        return
-    date_str = args[1] + " " + args[2]
-    try:
-        trigger_time = datetime.strptime(date_str, "%Y-%m-%d %H:%M")
-    except ValueError:
-        await update.message.reply_text("Неверный формат даты. Используйте: YYYY-MM-DD HH:MM")
-        return
-    text = args[3]
-    scheduler.add_job(
-        send_reminder,
-        trigger=DateTrigger(run_date=trigger_time),
-        args=[ADMIN_ID, text],
-        id=f"remind_{int(time.time())}"
-    )
-    await update.message.reply_text(f"✅ Напоминание установлено на {date_str}")
-
-# ---------- ГЛАВНАЯ ФУНКЦИЯ ----------
 def main():
-    global app
     thread = threading.Thread(target=run_health_server, daemon=True)
     thread.start()
 
@@ -374,12 +307,10 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("menu", menu))
-    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CommandHandler("stats", admin_stats))
     app.add_handler(CommandHandler("add_service", admin_add_service))
     app.add_handler(CommandHandler("add_faq", admin_add_faq))
-    app.add_handler(CommandHandler("remind", set_reminder))
 
     app.add_handler(CallbackQueryHandler(button_callback))
 
@@ -397,8 +328,6 @@ def main():
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_report_description))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_reply))
-
-    scheduler.start()
 
     print("Бот запущен и слушает сообщения...")
     while True:
