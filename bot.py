@@ -172,9 +172,23 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "back":
-        await query.edit_message_text("Главное меню:", reply_markup=get_main_menu())
-        user_data.pop("service_message_id", None)
-        user_data.pop("service_chat_id", None)
+        # Удаляем сообщение с услугой
+        msg_id = user_data.get("service_message_id")
+        chat_id = user_data.get("service_chat_id")
+        if msg_id and chat_id:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=msg_id)
+            except Exception as e:
+                print(f"Не удалось удалить сообщение: {e}")
+            user_data.pop("service_message_id", None)
+            user_data.pop("service_chat_id", None)
+        # Отправляем новое сообщение с главным меню
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text="Главное меню:",
+            reply_markup=get_main_menu()
+        )
+        await query.delete_message()  # удаляем сообщение с кнопкой «В меню»
 
 # ---------- ПЕРЕСЫЛКА ИЗ ГРУППЫ ----------
 async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
