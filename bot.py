@@ -3,7 +3,7 @@ import time
 import threading
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -31,7 +31,6 @@ NAME, PHONE, ADDRESS = range(3)
 SERVICES_FILE = "services.json"
 FAQ_FILE = "faq.json"
 STATS_FILE = "stats.json"
-REMINDERS_FILE = "reminders.json"
 
 # ---------- РАБОТА С ДАННЫМИ ----------
 def load_json(filename, default):
@@ -48,7 +47,6 @@ def save_json(filename, data):
 services = load_json(SERVICES_FILE, [])
 faq = load_json(FAQ_FILE, {})
 stats = load_json(STATS_FILE, {"orders": 0, "messages": 0})
-reminders = load_json(REMINDERS_FILE, [])
 
 # ---------- ВИТРИНА (карусель) ----------
 if not services:
@@ -333,7 +331,11 @@ async def admin_add_faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
 scheduler = AsyncIOScheduler()
 
 async def send_reminder(chat_id, text):
-    await app.bot.send_message(chat_id=chat_id, text=f"⏰ Напоминание: {text}")
+    try:
+        # Используем глобальный объект app, который будет инициализирован в main
+        await app.bot.send_message(chat_id=chat_id, text=f"⏰ Напоминание: {text}")
+    except Exception as e:
+        print(f"Ошибка отправки напоминания: {e}")
 
 async def set_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -410,7 +412,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-
