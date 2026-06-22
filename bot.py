@@ -11,8 +11,43 @@ ADMIN_ID = 5206473963
 CHAT_ID = -1003978554378
 # ---------------------------------
 
-# База знаний (FAQ)
-FAQ = {
+# ---------- ДАННЫЕ УСЛУГ (карусель) ----------
+# Замените ссылки на фото на свои!
+services = [
+    {
+        "name": "Покраска стен",
+        "price": "от 500 ₽/м²",
+        "photo": "https://i.imgur.com/your_painting.jpg",
+        "desc": "Качественные краски, гарантия 5 лет."
+    },
+    {
+        "name": "Штукатурка стен",
+        "price": "от 800 ₽/м²",
+        "photo": "https://i.imgur.com/your_plaster.jpg",
+        "desc": "Идеально ровные стены под обои или покраску."
+    },
+    {
+        "name": "Укладка плитки",
+        "price": "от 1500 ₽/м²",
+        "photo": "https://i.imgur.com/your_tile.jpg",
+        "desc": "Для ванных, кухонь, прихожих."
+    },
+    {
+        "name": "Натяжные потолки",
+        "price": "от 700 ₽/м²",
+        "photo": "https://i.imgur.com/your_ceiling.jpg",
+        "desc": "Матовые, глянцевые, тканевые."
+    },
+    {
+        "name": "Устранение косяков",
+        "price": "от 2000 ₽/стену",
+        "photo": "https://i.imgur.com/your_fix.jpg",
+        "desc": "Убираем светотени, кривые углы, неровности."
+    },
+]
+
+# ---------- FAQ ----------
+faq = {
     "светотень": "Светотени на стенах возникают из-за неравномерного нанесения краски или плохой подготовки. Обычно помогает перекраска с валиком с длинным ворсом.",
     "штукатурка": "Штукатурка должна сохнуть минимум 7 дней перед покраской.",
     "потолок": "Для потолка лучше использовать матовую краску – она скрывает неровности.",
@@ -33,6 +68,16 @@ def get_main_menu():
 
 def get_back_menu():
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Вернуться в меню", callback_data="back")]])
+
+def get_service_keyboard(index):
+    total = len(services)
+    buttons = []
+    if index > 0:
+        buttons.append(InlineKeyboardButton("◀️ Назад", callback_data=f"svc_{index-1}"))
+    if index < total - 1:
+        buttons.append(InlineKeyboardButton("Вперёд ▶️", callback_data=f"svc_{index+1}"))
+    buttons.append(InlineKeyboardButton("📋 В меню", callback_data="back"))
+    return InlineKeyboardMarkup([buttons])
 
 # ---------- HEALTH-СЕРВЕР ----------
 class HealthHandler(BaseHTTPRequestHandler):
@@ -64,16 +109,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
 
     if data == "prices":
-        text = (
-            "💰 **Наши услуги:**\n\n"
-            "• Покраска стен – от 500 ₽/м²\n"
-            "• Штукатурка – от 800 ₽/м²\n"
-            "• Натяжные потолки – от 700 ₽/м²\n"
-            "• Укладка плитки – от 1500 ₽/м²\n"
-            "• Устранение косяков – от 2000 ₽ за стену\n\n"
-            "Точную стоимость рассчитаем после замера."
-        )
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
+        # Показываем первую услугу
+        context.user_data["service_index"] = 0
+        await show_service(update, context)
+
+    elif data.startswith("svc_"):
+        index = int(data.split("_")[1])
+        context.user_data["service_index"] = index
+        await show_service(update, context)
 
     elif data == "order":
         await query.edit_message_text(
@@ -83,7 +126,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "faq":
         text = "❓ **Готовые ответы:**\n\n"
-        for keyword, answer in FAQ.items():
+        for keyword, answer in faq.items():
             text += f"• *{keyword.capitalize()}* — {answer}\n\n"
         text += "Если не нашли ответ, просто напишите свой вопрос."
         await query.edit_message_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
@@ -96,6 +139,25 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "back":
         await query.edit_message_text("Главное меню:", reply_markup=get_main_menu())
+
+async def show_service(update, context):
+    """Отображает текущую услугу с фото"""
+    query = update.callback_query
+    index = context.user_data.get("service_index", 0)
+    service = services[index]
+    caption = f"💰 **{service['name']}**\nЦена: {service['price']}\n\n{service['desc']}"
+    keyboard = get_service_keyboard(index)
+    await query.edit_message_caption(
+        caption=caption,
+        parse_mode="Markdown",
+        reply_markup=keyboard
+    )
+    # Если это первое открытие, редактируем текст на фото
+    # Используем edit_message_media для замены текста на фото
+    await query.edit_message_media(
+        media=InputMediaPhoto(media=service['photo'], caption=caption, parse_mode="Markdown"),
+        reply_markup=keyboard
+    )
 
 # ---------- ПЕРЕСЫЛКА ИЗ ГРУППЫ ----------
 async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -113,16 +175,14 @@ async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print(f"Ошибка пересылки: {e}")
 
 async def auto_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Если сообщение из личного чата с ботом и содержит ключевое слово – отвечаем
     if update.effective_chat.type == "private":
         text = update.message.text
         if text:
             text_lower = text.lower()
-            for keyword, answer in FAQ.items():
+            for keyword, answer in faq.items():
                 if keyword in text_lower:
                     await update.message.reply_text(answer)
                     return
-    # Иначе пересылаем админу, если сообщение из группы
     if update.effective_chat.id == CHAT_ID:
         await forward_to_admin(update, context)
 
@@ -137,9 +197,7 @@ def main():
     app.add_handler(CommandHandler("menu", menu))
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    # Пересылка из группы и автоответы
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_reply))
-    # Для пересылки медиа (фото/видео) из группы
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, forward_to_admin))
 
     print("Бот запущен и слушает сообщения...")
