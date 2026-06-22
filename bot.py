@@ -4,7 +4,7 @@ import threading
 import json
 import os
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application,
     MessageHandler,
@@ -21,7 +21,7 @@ CHAT_ID = -1003978554378
 # ---------------------------------
 
 # Состояния для диалога заявки
-NAME, PHONE, ADDRESS, WORK_TYPE, AREA = range(5)
+NAME, PHONE, PHONE_CODE, ADDRESS, WORK_TYPE, AREA = range(6)
 
 STATS_FILE = "stats.json"
 
@@ -101,7 +101,7 @@ def get_service_keyboard(index):
         buttons.append(InlineKeyboardButton("◀️ Назад", callback_data=f"svc_{index-1}"))
     if index < total - 1:
         buttons.append(InlineKeyboardButton("Вперёд ▶️", callback_data=f"svc_{index+1}"))
-    buttons.append(InlineKeyboardButton("📋 В меню", callback_data="back"))
+    buttons.append(InlineKeyboardButton("🏠 В меню", callback_data="back"))
     return InlineKeyboardMarkup([buttons])
 
 # ---------- КЛАВИАТУРЫ ДЛЯ ДИАЛОГА ----------
@@ -126,8 +126,16 @@ def get_area_keyboard():
     ]
     return InlineKeyboardMarkup(buttons)
 
+def get_phone_code_keyboard():
+    buttons = [
+        [InlineKeyboardButton("🇷🇺 +7", callback_data="code_+7")],
+        [InlineKeyboardButton("🇧🇾 +375", callback_data="code_+375")],
+    ]
+    return InlineKeyboardMarkup(buttons)
+
 def get_cancel_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отменить заявку", callback_data="cancel_order")]])
+    # Заменяем крестик на дружелюбную кнопку возврата в меню
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Вернуться в меню", callback_data="cancel_order")]])
 
 # ---------- HEALTH-СЕРВЕР ----------
 class HealthHandler(BaseHTTPRequestHandler):
@@ -189,14 +197,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data["order_step"] = "area_custom"
         else:
             user_data["order_area"] = area
-            # Завершаем заявку
             await finish_order(update, context, query)
+        return
+
+    elif data.startswith("code_"):
+        code = data.split("_")[1]
+        user_data["phone_code"] = code
+        user_data["order_step"] = "phone"
+        await query.edit_message_text(
+            f"Отлично! Теперь напишите остальные цифры номера (например, 9123456789).\n"
+            "Я автоматически добавлю код страны.",
+            reply_markup=get_cancel_keyboard()
+        )
         return
 
     elif data == "cancel_order":
         user_data.clear()
         await query.edit_message_text(
-            "Заявка отменена.",
+            "Возврат в главное меню.",
             reply_markup=get_main_menu()
         )
         return
@@ -250,7 +268,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "order":
         user_data["order_step"] = "name"
         await query.edit_message_text(
-            "📝 Для записи на замер напишите ваше **имя** (или нажмите кнопку отмены).",
+            "📝 Для записи на замер напишите ваше имя (или нажмите кнопку возврата).",
             reply_markup=get_cancel_keyboard()
         )
         return
@@ -288,7 +306,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.delete_message()
 
 async def finish_order(update, context, query=None):
-    """Завершает сбор заявки и отправляет админу"""
     user_data = context.user_data
     name = user_data.get("order_name", "не указано")
     phone = user_data.get("order_phone", "не указано")
@@ -320,37 +337,46 @@ async def finish_order(update, context, query=None):
     save_stats(stats)
     user_data.clear()
 
-# ---------- ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ (для заявки и FAQ) ----------
+# ---------- ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ ----------
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
     step = user_data.get("order_step")
     text = update.message.text
 
-    # Если диалог заявки активен
     if step:
         if text.startswith('/'):
             return
 
         if step == "name":
             user_data["order_name"] = text
-            user_data["order_step"] = "phone"
+            user_data["order_step"] = "phone_code"
             await update.message.reply_text(
-                "Отлично! Теперь напишите ваш **телефон** (или нажмите кнопку отмены).",
-                reply_markup=get_cancel_keyboard()
+                "Теперь выберите код страны:",
+                reply_markup=get_phone_code_keyboard()
             )
         elif step == "phone":
-            user_data["order_phone"] = text
+            # Уже есть код страны в user_data["phone_code"]
+            phone_code = user_data.get("phone_code", "+7")
+            full_phone = phone_code + text
+            user_data["order_phone"] = full_phone
             user_data["order_step"] = "address"
+            # Предлагаем отправить геолокацию или ввести адрес
+            keyboard = ReplyKeyboardMarkup(
+                [[KeyboardButton("📍 Отправить местоположение", request_location=True)]],
+                resize_keyboard=True, one_time_keyboard=True
+            )
             await update.message.reply_text(
-                "Теперь напишите **адрес** (город, улица, дом).",
-                reply_markup=get_cancel_keyboard()
+                "Теперь укажите адрес. Вы можете отправить геолокацию (нажмите кнопку) или ввести адрес текстом.",
+                reply_markup=keyboard
             )
         elif step == "address":
+            # Пользователь ввел адрес текстом
             user_data["order_address"] = text
             user_data["order_step"] = "work_type"
             await update.message.reply_text(
                 "Теперь выберите вид работ:",
-                reply_markup=get_work_type_keyboard()
+                reply_markup=get_work_type_keyboard(),
+                reply_markup=ReplyKeyboardRemove()
             )
         elif step == "work_type_custom":
             user_data["order_work_type"] = text
@@ -388,6 +414,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("Сообщение переслано")
         except Exception as e:
             print(f"Ошибка пересылки: {e}")
+
+# ---------- ОБРАБОТЧИК ГЕОЛОКАЦИИ ----------
+async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_data = context.user_data
+    if user_data.get("order_step") == "address":
+        location = update.message.location
+        # Формируем ссылку на карты
+        maps_link = f"https://www.google.com/maps?q={location.latitude},{location.longitude}"
+        user_data["order_address"] = maps_link
+        user_data["order_step"] = "work_type"
+        await update.message.reply_text(
+            "📍 Местоположение получено. Теперь выберите вид работ:",
+            reply_markup=get_work_type_keyboard(),
+            reply_markup=ReplyKeyboardRemove()
+        )
+    else:
+        await update.message.reply_text("Сейчас не нужно отправлять геолокацию.")
 
 # ---------- ОБРАБОТКА ФОТО/ВИДЕО ----------
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -437,9 +480,10 @@ def main():
 
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    # Основной обработчик текста (заявка + FAQ + пересылка)
+    # Обработчики текста
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
+    # Обработчик геолокации
+    app.add_handler(MessageHandler(filters.LOCATION, handle_location))
     # Обработчики медиа
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_report_description))
@@ -451,7 +495,7 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
     if "order_step" in user_data:
         user_data.clear()
-        await update.message.reply_text("Заявка отменена.", reply_markup=get_main_menu())
+        await update.message.reply_text("Возврат в главное меню.", reply_markup=get_main_menu())
     else:
         await update.message.reply_text("У вас нет активной заявки.", reply_markup=get_main_menu())
 
