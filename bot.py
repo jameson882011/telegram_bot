@@ -134,7 +134,6 @@ def get_phone_code_keyboard():
     return InlineKeyboardMarkup(buttons)
 
 def get_cancel_keyboard():
-    # Заменяем крестик на дружелюбную кнопку возврата в меню
     return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Вернуться в меню", callback_data="cancel_order")]])
 
 # ---------- HEALTH-СЕРВЕР ----------
@@ -169,7 +168,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_data = context.user_data
 
-    # Обработка кнопок в диалоге
     if data.startswith("work_"):
         work_type = data.split("_")[1]
         if work_type == "other":
@@ -219,7 +217,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Остальные кнопки меню
     if data == "prices":
         index = 0
         user_data["service_index"] = index
@@ -355,12 +352,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=get_phone_code_keyboard()
             )
         elif step == "phone":
-            # Уже есть код страны в user_data["phone_code"]
             phone_code = user_data.get("phone_code", "+7")
             full_phone = phone_code + text
             user_data["order_phone"] = full_phone
             user_data["order_step"] = "address"
-            # Предлагаем отправить геолокацию или ввести адрес
             keyboard = ReplyKeyboardMarkup(
                 [[KeyboardButton("📍 Отправить местоположение", request_location=True)]],
                 resize_keyboard=True, one_time_keyboard=True
@@ -370,7 +365,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=keyboard
             )
         elif step == "address":
-            # Пользователь ввел адрес текстом
             user_data["order_address"] = text
             user_data["order_step"] = "work_type"
             await update.message.reply_text(
@@ -390,7 +384,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await finish_order(update, context)
         return
 
-    # Если не в диалоге, проверяем FAQ и автоответы
     if update.effective_chat.type == "private":
         if text:
             text_lower = text.lower()
@@ -401,7 +394,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     save_stats(stats)
                     return
 
-    # Если сообщение из группы – пересылаем админу
     if update.effective_chat.id == CHAT_ID:
         if text and text.startswith('/'):
             return
@@ -420,7 +412,6 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
     if user_data.get("order_step") == "address":
         location = update.message.location
-        # Формируем ссылку на карты
         maps_link = f"https://www.google.com/maps?q={location.latitude},{location.longitude}"
         user_data["order_address"] = maps_link
         user_data["order_step"] = "work_type"
@@ -480,11 +471,8 @@ def main():
 
     app.add_handler(CallbackQueryHandler(button_callback))
 
-    # Обработчики текста
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    # Обработчик геолокации
     app.add_handler(MessageHandler(filters.LOCATION, handle_location))
-    # Обработчики медиа
     app.add_handler(MessageHandler(filters.PHOTO | filters.VIDEO, handle_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_report_description))
 
@@ -501,3 +489,4 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     main()
+
