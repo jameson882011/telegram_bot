@@ -369,7 +369,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data["order_step"] = "work_type"
             await update.message.reply_text(
                 "Теперь выберите вид работ:",
-                reply_markup=get_work_type_keyboard(),
+                reply_markup=get_work_type_keyboard()
+            )
+            # Убираем клавиатуру после отправки
+            await update.message.reply_text(
+                "⌨️ Обычная клавиатура восстановлена.",
                 reply_markup=ReplyKeyboardRemove()
             )
         elif step == "work_type_custom":
@@ -417,7 +421,10 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data["order_step"] = "work_type"
         await update.message.reply_text(
             "📍 Местоположение получено. Теперь выберите вид работ:",
-            reply_markup=get_work_type_keyboard(),
+            reply_markup=get_work_type_keyboard()
+        )
+        await update.message.reply_text(
+            "⌨️ Обычная клавиатура восстановлена.",
             reply_markup=ReplyKeyboardRemove()
         )
     else:
@@ -489,4 +496,3 @@ async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == "__main__":
     main()
-
