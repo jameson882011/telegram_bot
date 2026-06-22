@@ -20,8 +20,9 @@ ADMIN_ID = 5206473963
 CHAT_ID = -1003978554378
 # ---------------------------------
 
-# Состояния для диалога заявки
+# Состояния для диалога заявки и калькулятора
 NAME, PHONE, PHONE_CODE, ADDRESS, WORK_TYPE, AREA = range(6)
+CALC_SERVICE, CALC_AREA = range(2)
 
 STATS_FILE = "stats.json"
 
@@ -42,31 +43,36 @@ stats = load_stats()
 services = [
     {
         "name": "Покраска стен",
-        "price": "от 500 ₽/м²",
+        "price": 500,
+        "price_text": "от 500 ₽/м²",
         "photo": "https://i.imgur.com/your_painting.jpg",
         "desc": "Качественные краски, гарантия 5 лет."
     },
     {
         "name": "Штукатурка стен",
-        "price": "от 800 ₽/м²",
+        "price": 800,
+        "price_text": "от 800 ₽/м²",
         "photo": "https://i.imgur.com/your_plaster.jpg",
         "desc": "Идеально ровные стены под обои или покраску."
     },
     {
         "name": "Укладка плитки",
-        "price": "от 1500 ₽/м²",
+        "price": 1500,
+        "price_text": "от 1500 ₽/м²",
         "photo": "https://i.imgur.com/your_tile.jpg",
         "desc": "Для ванных, кухонь, прихожих."
     },
     {
         "name": "Натяжные потолки",
-        "price": "от 700 ₽/м²",
+        "price": 700,
+        "price_text": "от 700 ₽/м²",
         "photo": "https://i.imgur.com/your_ceiling.jpg",
         "desc": "Матовые, глянцевые, тканевые."
     },
     {
         "name": "Устранение косяков",
-        "price": "от 2000 ₽/стену",
+        "price": 2000,
+        "price_text": "от 2000 ₽/стену",
         "photo": "https://i.imgur.com/your_fix.jpg",
         "desc": "Убираем светотени, кривые углы, неровности."
     },
@@ -85,6 +91,7 @@ faq = {
 def get_main_menu():
     keyboard = [
         [InlineKeyboardButton("💰 Стоимость и услуги", callback_data="prices")],
+        [InlineKeyboardButton("🧮 Рассчитать стоимость", callback_data="calculator")],
         [InlineKeyboardButton("📝 Записаться на замер", callback_data="order")],
         [InlineKeyboardButton("❓ Готовые ответы", callback_data="faq")],
         [InlineKeyboardButton("📸 Показать проблему на фото", callback_data="report")],
@@ -103,6 +110,13 @@ def get_service_keyboard(index):
         buttons.append(InlineKeyboardButton("Вперёд ▶️", callback_data=f"svc_{index+1}"))
     buttons.append(InlineKeyboardButton("🏠 В меню", callback_data="back"))
     return InlineKeyboardMarkup([buttons])
+
+def get_calc_service_keyboard():
+    buttons = []
+    for i, service in enumerate(services):
+        buttons.append([InlineKeyboardButton(f"{service['name']} ({service['price_text']})", callback_data=f"calc_{i}")])
+    buttons.append([InlineKeyboardButton("⬅️ Вернуться в меню", callback_data="back")])
+    return InlineKeyboardMarkup(buttons)
 
 # ---------- КЛАВИАТУРЫ ДЛЯ ДИАЛОГА ----------
 def get_work_type_keyboard():
@@ -168,6 +182,29 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_data = context.user_data
 
+    # ---------- ОБРАБОТЧИК КАЛЬКУЛЯТОРА ----------
+    if data.startswith("calc_"):
+        if data == "calculator":
+            await query.edit_message_text(
+                "🧮 **Рассчитаем примерную стоимость**\n\n"
+                "Выберите вид работ, который вас интересует:",
+                reply_markup=get_calc_service_keyboard()
+            )
+            return
+
+        elif data.startswith("calc_"):
+            index = int(data.split("_")[1])
+            user_data["calc_service_index"] = index
+            user_data["calc_step"] = "area"
+            await query.edit_message_text(
+                f"Вы выбрали: {services[index]['name']}\n"
+                f"Стоимость: {services[index]['price_text']}\n\n"
+                "Теперь напишите примерную **площадь в м²** (цифрой).",
+                reply_markup=get_cancel_keyboard()
+            )
+            return
+
+    # ---------- ОБРАБОТЧИК ЗАЯВКИ ----------
     if data.startswith("work_"):
         work_type = data.split("_")[1]
         if work_type == "other":
@@ -217,11 +254,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ---------- ОСТАЛЬНЫЕ КНОПКИ МЕНЮ ----------
     if data == "prices":
         index = 0
         user_data["service_index"] = index
         service = services[index]
-        caption = f"💰 **{service['name']}**\nЦена: {service['price']}\n\n{service['desc']}"
+        caption = f"💰 **{service['name']}**\nЦена: {service['price_text']}\n\n{service['desc']}"
         keyboard = get_service_keyboard(index)
         msg = await context.bot.send_photo(
             chat_id=update.effective_chat.id,
@@ -239,7 +277,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         index = int(data.split("_")[1])
         user_data["service_index"] = index
         service = services[index]
-        caption = f"💰 **{service['name']}**\nЦена: {service['price']}\n\n{service['desc']}"
+        caption = f"💰 **{service['name']}**\nЦена: {service['price_text']}\n\n{service['desc']}"
         keyboard = get_service_keyboard(index)
         msg_id = user_data.get("service_message_id")
         chat_id = user_data.get("service_chat_id")
@@ -338,8 +376,38 @@ async def finish_order(update, context, query=None):
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
     step = user_data.get("order_step")
+    calc_step = user_data.get("calc_step")
     text = update.message.text
 
+    # ---------- КАЛЬКУЛЯТОР ----------
+    if calc_step == "area":
+        try:
+            area = float(text.replace(",", "."))
+            if area <= 0:
+                raise ValueError
+            service_index = user_data.get("calc_service_index", 0)
+            service = services[service_index]
+            total = service["price"] * area
+            await update.message.reply_text(
+                f"🧮 **Расчёт стоимости:**\n\n"
+                f"Услуга: {service['name']}\n"
+                f"Площадь: {area} м²\n"
+                f"Цена за м²: {service['price_text']}\n\n"
+                f"💎 **Примерная стоимость: {total:,} ₽**\n\n"
+                "Точную стоимость рассчитаем после выезда на замер.",
+                reply_markup=get_main_menu()
+            )
+            user_data.pop("calc_step", None)
+            user_data.pop("calc_service_index", None)
+            return
+        except (ValueError, TypeError):
+            await update.message.reply_text(
+                "Пожалуйста, введите число (например, 45 или 45.5).",
+                reply_markup=get_cancel_keyboard()
+            )
+            return
+
+    # ---------- ЗАЯВКА ----------
     if step:
         if text.startswith('/'):
             return
@@ -371,7 +439,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Теперь выберите вид работ:",
                 reply_markup=get_work_type_keyboard()
             )
-            # Убираем клавиатуру после отправки
             await update.message.reply_text(
                 "⌨️ Обычная клавиатура восстановлена.",
                 reply_markup=ReplyKeyboardRemove()
@@ -388,6 +455,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await finish_order(update, context)
         return
 
+    # ---------- АВТООТВЕТЫ ----------
     if update.effective_chat.type == "private":
         if text:
             text_lower = text.lower()
@@ -398,6 +466,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     save_stats(stats)
                     return
 
+    # ---------- ПЕРЕСЫЛКА ИЗ ГРУППЫ ----------
     if update.effective_chat.id == CHAT_ID:
         if text and text.startswith('/'):
             return
@@ -488,11 +557,11 @@ def main():
 
 async def cancel_order(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
-    if "order_step" in user_data:
+    if "order_step" in user_data or "calc_step" in user_data:
         user_data.clear()
         await update.message.reply_text("Возврат в главное меню.", reply_markup=get_main_menu())
     else:
-        await update.message.reply_text("У вас нет активной заявки.", reply_markup=get_main_menu())
+        await update.message.reply_text("У вас нет активной операции.", reply_markup=get_main_menu())
 
 if __name__ == "__main__":
     main()
