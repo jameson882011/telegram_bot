@@ -20,8 +20,9 @@ ADMIN_ID = 5206473963
 CHAT_ID = -1003978554378
 # ---------------------------------
 
-# Состояния для диалога заявки и калькулятора
+# Состояния для диалога заявки
 NAME, PHONE, PHONE_CODE, ADDRESS, WORK_TYPE, AREA = range(6)
+# Состояния для калькулятора
 CALC_SERVICE, CALC_AREA = range(2)
 
 STATS_FILE = "stats.json"
@@ -118,7 +119,10 @@ def get_calc_service_keyboard():
     buttons.append([InlineKeyboardButton("⬅️ Вернуться в меню", callback_data="back")])
     return InlineKeyboardMarkup(buttons)
 
-# ---------- КЛАВИАТУРЫ ДЛЯ ДИАЛОГА ----------
+def get_cancel_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Вернуться в меню", callback_data="cancel_order")]])
+
+# ---------- КЛАВИАТУРЫ ДЛЯ ДИАЛОГА ЗАЯВКИ ----------
 def get_work_type_keyboard():
     buttons = [
         [InlineKeyboardButton("🖌️ Малярные работы", callback_data="work_малярка")],
@@ -146,9 +150,6 @@ def get_phone_code_keyboard():
         [InlineKeyboardButton("🇧🇾 +375", callback_data="code_+375")],
     ]
     return InlineKeyboardMarkup(buttons)
-
-def get_cancel_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Вернуться в меню", callback_data="cancel_order")]])
 
 # ---------- HEALTH-СЕРВЕР ----------
 class HealthHandler(BaseHTTPRequestHandler):
@@ -182,29 +183,28 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_data = context.user_data
 
-    # ---------- ОБРАБОТЧИК КАЛЬКУЛЯТОРА ----------
-    if data.startswith("calc_"):
-        if data == "calculator":
-            await query.edit_message_text(
-                "🧮 **Рассчитаем примерную стоимость**\n\n"
-                "Выберите вид работ, который вас интересует:",
-                reply_markup=get_calc_service_keyboard()
-            )
-            return
+    # ---------- КАЛЬКУЛЯТОР ----------
+    if data == "calculator":
+        await query.edit_message_text(
+            "🧮 **Рассчитаем примерную стоимость**\n\n"
+            "Выберите вид работ, который вас интересует:",
+            reply_markup=get_calc_service_keyboard()
+        )
+        return
 
-        elif data.startswith("calc_"):
-            index = int(data.split("_")[1])
-            user_data["calc_service_index"] = index
-            user_data["calc_step"] = "area"
-            await query.edit_message_text(
-                f"Вы выбрали: {services[index]['name']}\n"
-                f"Стоимость: {services[index]['price_text']}\n\n"
-                "Теперь напишите примерную **площадь в м²** (цифрой).",
-                reply_markup=get_cancel_keyboard()
-            )
-            return
+    elif data.startswith("calc_"):
+        index = int(data.split("_")[1])
+        user_data["calc_service_index"] = index
+        user_data["calc_step"] = "area"
+        await query.edit_message_text(
+            f"Вы выбрали: {services[index]['name']}\n"
+            f"Стоимость: {services[index]['price_text']}\n\n"
+            "Теперь напишите примерную **площадь в м²** (цифрой).",
+            reply_markup=get_cancel_keyboard()
+        )
+        return
 
-    # ---------- ОБРАБОТЧИК ЗАЯВКИ ----------
+    # ---------- ЗАЯВКА ----------
     if data.startswith("work_"):
         work_type = data.split("_")[1]
         if work_type == "other":
@@ -393,7 +393,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Услуга: {service['name']}\n"
                 f"Площадь: {area} м²\n"
                 f"Цена за м²: {service['price_text']}\n\n"
-                f"💎 **Примерная стоимость: {total:,} ₽**\n\n"
+                f"💎 **Примерная стоимость: {total:,.0f} ₽**\n\n"
                 "Точную стоимость рассчитаем после выезда на замер.",
                 reply_markup=get_main_menu()
             )
