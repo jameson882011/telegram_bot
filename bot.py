@@ -3,6 +3,7 @@ import time
 import threading
 import json
 import os
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto, KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
@@ -14,20 +15,44 @@ from telegram.ext import (
     CallbackQueryHandler,
 )
 
+# ---------- ТРЕЛЛО ----------
+from trello import TrelloClient
+
 # ---------- КОНФИГУРАЦИЯ ----------
 BOT_TOKEN = "8885379423:AAGbn9nfZj-I4_nzC0mU9Aec0y23GGbzaLY"
 ADMIN_ID = 5206473963
 CHAT_ID = -1003978554378
-# ---------------------------------
 
-# Состояния для диалога заявки
+# ---------- ТРЕЛЛО ----------
+TRELLO_API_KEY = "ВАШ_API_КЛЮЧ"
+TRELLO_TOKEN = "ВАШ_ТОКЕН"
+BOARD_ID = "6a39c84c8c9284ceffa8bed8"
+LIST_ID_NEW = "6a39c84d8c9284ceffa8bf0b"
+
+def add_card_to_trello(name, phone, address, work_type, area):
+    try:
+        client = TrelloClient(
+            api_key=TRELLO_API_KEY,
+            token=TRELLO_TOKEN
+        )
+        board = client.get_board(BOARD_ID)
+        list_obj = board.get_list(LIST_ID_NEW)
+        card = list_obj.add_card(
+            name=f"Заявка от {name}",
+            desc=f"Имя: {name}\nТелефон: {phone}\nАдрес: {address}\nВид работ: {work_type}\nОбъём: {area} м²"
+        )
+        print(f"✅ Карточка создана в Трелло: {card.id}")
+        return True
+    except Exception as e:
+        print(f"❌ Ошибка при создании карточки в Трелло: {e}")
+        return False
+
+# ---------- ОСТАЛЬНОЙ КОД ----------
 NAME, PHONE, PHONE_CODE, ADDRESS, WORK_TYPE, AREA = range(6)
-# Состояния для калькулятора
 CALC_SERVICE, CALC_AREA = range(2)
 
 STATS_FILE = "stats.json"
 
-# ---------- СТАТИСТИКА ----------
 def load_stats():
     if os.path.exists(STATS_FILE):
         with open(STATS_FILE, "r", encoding="utf-8") as f:
@@ -40,43 +65,12 @@ def save_stats(stats):
 
 stats = load_stats()
 
-# ---------- ДАННЫЕ УСЛУГ ----------
 services = [
-    {
-        "name": "Покраска стен",
-        "price": 500,
-        "price_text": "от 500 ₽/м²",
-        "photo": "https://i.imgur.com/your_painting.jpg",
-        "desc": "Качественные краски, гарантия 5 лет."
-    },
-    {
-        "name": "Штукатурка стен",
-        "price": 800,
-        "price_text": "от 800 ₽/м²",
-        "photo": "https://i.imgur.com/your_plaster.jpg",
-        "desc": "Идеально ровные стены под обои или покраску."
-    },
-    {
-        "name": "Укладка плитки",
-        "price": 1500,
-        "price_text": "от 1500 ₽/м²",
-        "photo": "https://i.imgur.com/your_tile.jpg",
-        "desc": "Для ванных, кухонь, прихожих."
-    },
-    {
-        "name": "Натяжные потолки",
-        "price": 700,
-        "price_text": "от 700 ₽/м²",
-        "photo": "https://i.imgur.com/your_ceiling.jpg",
-        "desc": "Матовые, глянцевые, тканевые."
-    },
-    {
-        "name": "Устранение косяков",
-        "price": 2000,
-        "price_text": "от 2000 ₽/стену",
-        "photo": "https://i.imgur.com/your_fix.jpg",
-        "desc": "Убираем светотени, кривые углы, неровности."
-    },
+    {"name": "Покраска стен", "price": 500, "price_text": "от 500 ₽/м²", "photo": "https://i.imgur.com/your_painting.jpg", "desc": "Качественные краски, гарантия 5 лет."},
+    {"name": "Штукатурка стен", "price": 800, "price_text": "от 800 ₽/м²", "photo": "https://i.imgur.com/your_plaster.jpg", "desc": "Идеально ровные стены под обои или покраску."},
+    {"name": "Укладка плитки", "price": 1500, "price_text": "от 1500 ₽/м²", "photo": "https://i.imgur.com/your_tile.jpg", "desc": "Для ванных, кухонь, прихожих."},
+    {"name": "Натяжные потолки", "price": 700, "price_text": "от 700 ₽/м²", "photo": "https://i.imgur.com/your_ceiling.jpg", "desc": "Матовые, глянцевые, тканевые."},
+    {"name": "Устранение косяков", "price": 2000, "price_text": "от 2000 ₽/стену", "photo": "https://i.imgur.com/your_fix.jpg", "desc": "Убираем светотени, кривые углы, неровности."},
 ]
 
 faq = {
@@ -88,7 +82,6 @@ faq = {
     "сроки": "Обычно отделка квартиры 50 м² занимает 2–3 недели.",
 }
 
-# ---------- МЕНЮ ----------
 def get_main_menu():
     keyboard = [
         [InlineKeyboardButton("💰 Стоимость и услуги", callback_data="prices")],
@@ -119,10 +112,6 @@ def get_calc_service_keyboard():
     buttons.append([InlineKeyboardButton("⬅️ Вернуться в меню", callback_data="back")])
     return InlineKeyboardMarkup(buttons)
 
-def get_cancel_keyboard():
-    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Вернуться в меню", callback_data="cancel_order")]])
-
-# ---------- КЛАВИАТУРЫ ДЛЯ ДИАЛОГА ЗАЯВКИ ----------
 def get_work_type_keyboard():
     buttons = [
         [InlineKeyboardButton("🖌️ Малярные работы", callback_data="work_малярка")],
@@ -151,7 +140,9 @@ def get_phone_code_keyboard():
     ]
     return InlineKeyboardMarkup(buttons)
 
-# ---------- HEALTH-СЕРВЕР ----------
+def get_cancel_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Вернуться в меню", callback_data="cancel_order")]])
+
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -164,7 +155,6 @@ def run_health_server():
     server = HTTPServer(('0.0.0.0', 10000), HealthHandler)
     server.serve_forever()
 
-# ---------- ОСНОВНЫЕ ОБРАБОТЧИКИ ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Привет! Я бот-помощник по отделке.\n"
@@ -183,7 +173,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_data = context.user_data
 
-    # ---------- КАЛЬКУЛЯТОР ----------
     if data == "calculator":
         await query.edit_message_text(
             "🧮 Рассчитаем примерную стоимость\n\n"
@@ -204,7 +193,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ---------- ЗАЯВКА ----------
     if data.startswith("work_"):
         work_type = data.split("_")[1]
         if work_type == "other":
@@ -254,7 +242,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ---------- ОСТАЛЬНЫЕ КНОПКИ МЕНЮ ----------
     if data == "prices":
         index = 0
         user_data["service_index"] = index
@@ -309,15 +296,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif data == "faq":
-        text = "❓ **Готовые ответы:**\n\n"
+        text = "❓ Готовые ответы:\n\n"
         for keyword, answer in faq.items():
-            text += f"• *{keyword.capitalize()}* — {answer}\n\n"
+            text += f"• {keyword.capitalize()} — {answer}\n\n"
         text += "Если не нашли ответ, просто напишите свой вопрос."
-        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=get_back_menu())
+        await query.edit_message_text(text, reply_markup=get_back_menu())
 
     elif data == "report":
         await query.edit_message_text(
-            "📸 Отправьте **фото или видео** проблемы, затем напишите текстовое описание.\n"
+            "📸 Отправьте фото или видео проблемы, затем напишите текстовое описание.\n"
             "Я перешлю всё мастеру.",
             reply_markup=get_back_menu()
         )
@@ -340,7 +327,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.delete_message()
 
-async def finish_order(update, context, query=None):
+async def finish_order(update, Update, context, query=None):
     user_data = context.user_data
     name = user_data.get("order_name", "не указано")
     phone = user_data.get("order_phone", "не указано")
@@ -349,14 +336,17 @@ async def finish_order(update, context, query=None):
     area = user_data.get("order_area", "не указано")
 
     msg = (
-        f"🔔 **НОВАЯ ЗАЯВКА НА ЗАМЕР**\n"
+        f"🔔 НОВАЯ ЗАЯВКА НА ЗАМЕР\n"
         f"Имя: {name}\n"
         f"Телефон: {phone}\n"
         f"Адрес: {address}\n"
         f"Вид работ: {work_type}\n"
         f"Объём: {area} м²"
     )
-    await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+    await context.bot.send_message(chat_id=ADMIN_ID, text=msg)
+
+    add_card_to_trello(name, phone, address, work_type, area)
+
     if query:
         await query.edit_message_text(
             "✅ Заявка принята! Мы свяжемся с вами в ближайшее время.",
@@ -372,14 +362,12 @@ async def finish_order(update, context, query=None):
     save_stats(stats)
     user_data.clear()
 
-# ---------- ОБРАБОТЧИК ТЕКСТОВЫХ СООБЩЕНИЙ ----------
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
     step = user_data.get("order_step")
     calc_step = user_data.get("calc_step")
     text = update.message.text
 
-    # ---------- КАЛЬКУЛЯТОР ----------
     if calc_step == "area":
         try:
             area = float(text.replace(",", "."))
@@ -412,7 +400,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # ---------- ЗАЯВКА ----------
     if step:
         if text.startswith('/'):
             return
@@ -460,7 +447,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await finish_order(update, context)
         return
 
-    # ---------- АВТООТВЕТЫ ----------
     if update.effective_chat.type == "private":
         if text:
             text_lower = text.lower()
@@ -471,7 +457,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     save_stats(stats)
                     return
 
-    # ---------- ПЕРЕСЫЛКА ИЗ ГРУППЫ ----------
     if update.effective_chat.id == CHAT_ID:
         if text and text.startswith('/'):
             return
@@ -485,7 +470,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"Ошибка пересылки: {e}")
 
-# ---------- ОБРАБОТЧИК ГЕОЛОКАЦИИ ----------
 async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
     if user_data.get("order_step") == "address":
@@ -504,7 +488,6 @@ async def handle_location(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Сейчас не нужно отправлять геолокацию.")
 
-# ---------- ОБРАБОТКА ФОТО/ВИДЕО ----------
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
         if context.user_data.get("report_step") == "waiting_media":
@@ -529,8 +512,8 @@ async def handle_report_description(update: Update, context: ContextTypes.DEFAUL
         description = update.message.text
         file_id = context.user_data.get("media_file_id")
         if file_id:
-            caption = f"📸 **Проблема от пользователя**\nОписание: {description}"
-            await context.bot.send_photo(chat_id=ADMIN_ID, photo=file_id, caption=caption, parse_mode="Markdown")
+            caption = f"📸 Проблема от пользователя\nОписание: {description}"
+            await context.bot.send_photo(chat_id=ADMIN_ID, photo=file_id, caption=caption)
             await update.message.reply_text("✅ Отчёт отправлен мастеру! Он свяжется с вами.", reply_markup=get_main_menu())
             stats["messages"] += 1
             save_stats(stats)
@@ -539,7 +522,6 @@ async def handle_report_description(update: Update, context: ContextTypes.DEFAUL
             await update.message.reply_text("Ошибка. Попробуйте заново.")
             context.user_data.clear()
 
-# ---------- ГЛАВНАЯ ФУНКЦИЯ ----------
 def main():
     thread = threading.Thread(target=run_health_server, daemon=True)
     thread.start()
